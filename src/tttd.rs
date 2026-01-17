@@ -24,8 +24,8 @@ impl Default for Config {
 // The TTTD (Two Thresholds Two Divisors) Chunker.
 //
 // This chunker uses Rabin fingerprinting with two different masks:
-// 1. `rabin_mask` (Primary/High): Hard condition. If matched, cut immediately.
-// 2. `backup_mask` (Backup/Low): Soft condition. If matched, remember position.
+// 1. `rabin_mask` (Primary/High): If matched, cut immediately.
+// 2. `backup_mask` (Backup/Low): If matched, remember position.
 //
 // If the primary mask is never matched within `max_size`, the algorithm "backtracks"
 // to the last position where the backup mask was matched.
@@ -189,59 +189,43 @@ impl Iterator for Chunker<'_> {
 // Rabin Polynomial Math
 
 fn deg(p: u64) -> i32 {
-    let mut mask = 0x8000_0000_0000_0000u64;
-
-    for i in 0..64 {
-        if (mask & p) > 0 {
-            return 63 - i;
-        }
-        mask >>= 1;
+    if p == 0 {
+        return -1;
     }
-
-    -1
+    
+    (63 - p.leading_zeros()) as i32
 }
 
-fn poly_mod(mut x: u64, p: u64) -> u64 {
+fn poly_mod(x: u64, p: u64) -> u64 {
     let dp = deg(p);
+    let dx = deg(x);
 
-    while deg(x) >= dp {
-        let sshift = deg(x) - dp;
-
-        x ^= p << sshift;
+    if dx < dp {
+        return x
     }
 
-    x
+    poly_mod(x ^ (p << (dx - dp)), p)
 }
 
-fn append_byte(mut hash: u64, b: u8, pol: u64) -> u64 {
-    hash <<= 8;
-    hash |= b as u64;
-
-    poly_mod(hash, pol)
+fn append_byte(hash: u64, b: u8, pol: u64) -> u64 {
+    let new_val = (hash << 8) | (b as u64);
+    
+    poly_mod(new_val, pol)
 }
 
 fn calc_tables() -> ([u64; 256], [u64; 256]) {
-    let mut out_table = [0u64; 256];
-    let mut mod_table = [0u64; 256];
+    let out_table: [u64; 256] = std::array::from_fn(|i| {
+        (0..(WINDOW_SIZE - 1)).fold(
+            append_byte(0, i as u8, POLYNOMIAL), 
+            |hash, _| append_byte(hash, 0, POLYNOMIAL)
+        )
+    });
 
-    // Calculate table for sliding out bytes
-    for b in 0..256 {
-        let mut hash = 0u64;
-
-        hash = append_byte(hash, b as u8, POLYNOMIAL);
-        for _ in 0..(WINDOW_SIZE - 1) {
-            hash = append_byte(hash, 0, POLYNOMIAL);
-        }
-        out_table[b] = hash;
-    }
-
-    // Calculate table for reduction mod Polynomial
-    let k = deg(POLYNOMIAL);
-    for b in 0..256 {
-        let p1 = poly_mod((b as u64) << k, POLYNOMIAL);
-        let p2 = (b as u64) << k;
-        mod_table[b] = p1 | p2;
-    }
+    let mod_table: [u64; 256] = std::array::from_fn(|i| {
+        let b = i as u64;
+        let shifted = b << deg(POLYNOMIAL);
+        poly_mod(shifted, POLYNOMIAL) | shifted
+    });
 
     (out_table, mod_table)
 }
@@ -274,10 +258,10 @@ mod tests {
 
         for chunk in chunks {
             if chunk.len == 8000 {
-                println!("Hit max size at {}", chunk.pos);
+                // println!("Hit max size at {}", chunk.pos);
                 hit_max += 1;
             } else {
-                println!("Cut found at len {}", chunk.len);
+                // println!("Cut found at len {}", chunk.len);
                 hit_cut += 1;
             }
         }
