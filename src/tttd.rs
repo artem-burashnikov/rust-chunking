@@ -317,7 +317,7 @@ mod tests {
         let chunker = Chunker::new(&data, sizes, config);
         let chunks: Vec<_> = chunker.collect();
 
-        assert_eq!(chunks[0].len, 1000); // Должен быть равен max
+        assert_eq!(chunks[0].len, 1000);
     }
 
     #[test]
